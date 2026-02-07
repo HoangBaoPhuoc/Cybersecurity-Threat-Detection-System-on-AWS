@@ -27,3 +27,31 @@ variable "opensearch_domain_name" {
   type        = string
   default     = "threat-detection-siem"
 }
+
+variable "jira_url" {
+  description = "URL of your Jira Cloud instance (e.g., https://your-domain.atlassian.net)"
+  type        = string
+}
+
+variable "jira_user" {
+  description = "Email address of the Jira user"
+  type        = string
+}
+
+variable "jira_api_token" {
+  description = "API Token for Jira (create at https://id.atlassian.com/manage-profile/security/api-tokens)"
+  type        = string
+  sensitive   = true
+}
+
+variable "jira_project_key" {
+  description = "Project Key where issues will be created (e.g., SEC)"
+  type        = string
+  default     = "SEC"
+}
+
+variable "openai_api_key" {
+  description = "OpenAI API Key for Real-Time AI Analysis"
+  type        = string
+  sensitive   = true
+}

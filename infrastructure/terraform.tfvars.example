@@ -1,0 +1,18 @@
+# Jira Configuration
+# URL of your Jira Cloud instance
+jira_url = "https://your-domain.atlassian.net"
+
+# Email address of the Jira user
+jira_user = "email@example.com"
+
+# API Token for Jira (create at https://id.atlassian.com/manage-profile/security/api-tokens)
+jira_api_token = "your-api-token-here"
+
+# Project Key where issues will be created
+jira_project_key = "SEC"
+
+# Optional: AWS Region
+aws_region = "us-east-1"
+
+# OpenAI Configuration (Required for AI Analysis)
+openai_api_key = "sk-..."

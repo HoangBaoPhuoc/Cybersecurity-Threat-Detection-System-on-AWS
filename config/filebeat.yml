@@ -5,6 +5,7 @@ filebeat.inputs:
     - /var/log/auth.log
     - /var/log/syslog
     - /var/log/*.log
+    - /var/log/financial_app.log
 
 filebeat.config.modules:
   path: ${path.config}/modules.d/*.yml
