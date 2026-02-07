@@ -1,0 +1,42 @@
+metricbeat.config.modules:
+  path: ${path.config}/modules.d/*.yml
+  reload.enabled: false
+
+metricbeat.modules:
+- module: system
+  metricsets:
+    - cpu
+    - load
+    - memory
+    - network
+    - process
+    - process_summary
+    - socket_summary
+    - entropy
+    - core
+    - diskio
+    - filesystem
+    - fsstat
+    - uptime
+  enabled: true
+  period: 10s
+  processes: ['.*']
+
+  # cpu.metrics:  ["percentages"]  # The other available options are normalized_percentages and ticks.
+  # core.metrics: ["percentages"]  # The other available options are ticks.
+
+setup.template.settings:
+  index.number_of_shards: 1
+
+output.kafka:
+  # initial brokers for reading cluster metadata
+  hosts: ["kafka-broker-1:9092", "kafka-broker-2:9092"]
+
+  # message topic selection + partitioning
+  topic: 'system-metrics'
+  partition.round_robin:
+    reachable_only: false
+
+  required_acks: 1
+  compression: gzip
+  max_message_bytes: 1000000
