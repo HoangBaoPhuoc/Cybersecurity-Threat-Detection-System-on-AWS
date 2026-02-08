@@ -2,7 +2,9 @@ import time
 import random
 import logging
 import json
+import threading
 from datetime import datetime
+from flask import Flask, jsonify, request
 
 # Configure logging
 LOG_FILE = "/var/log/financial_app.log"
@@ -11,6 +13,28 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+# Flask App for Real Network Activity
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return jsonify({"status": "running", "service": "financial-app"})
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
+
+@app.route('/api/transaction', methods=['POST'])
+def create_transaction():
+    # Endpoint to simulate receiving external transaction requests
+    # This creates real incoming network traffic for Metricbeat to see
+    data = request.json
+    return jsonify({"status": "processed", "transaction_id": f"txn-{random.randint(10000, 99999)}"}), 201
+
+def run_flask():
+    print("Starting Flask API on port 5000...")
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 
 users = ["admin", "alice", "bob", "charlie", "dave"]
 actions = ["LOGIN", "TRANSFER", "WITHDRAW", "DEPOSIT", "VIEW_BALANCE"]
@@ -93,6 +117,12 @@ def generate_log():
 
 if __name__ == "__main__":
     print(f"Starting Financial App Simulator. Logging to {LOG_FILE}...")
+    
+    # Start Flask in a separate thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Run log generation loop
     while True:
         generate_log()
         time.sleep(random.randint(1, 5))

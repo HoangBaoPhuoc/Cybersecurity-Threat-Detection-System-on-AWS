@@ -439,6 +439,12 @@ resource "aws_security_group" "financial_sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+  ingress {
+    from_port   = 5000
+    to_port     = 5000
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr] # Internal access only
+  }
   egress {
     from_port   = 0
     to_port     = 0
@@ -572,12 +578,25 @@ resource "aws_instance" "financial_server" {
               WantedBy=multi-user.target
               service
 
+              # Financial App Service
+              cat <<service > /etc/systemd/system/financial-app.service
+              [Unit]
+              Description=Financial App Simulator
+              After=network.target
+
+              [Service]
+              User=root
+              WorkingDirectory=/opt/financial_app
+              ExecStart=/usr/bin/python3 app.py
+              Restart=always
+
+              [Install]
+              WantedBy=multi-user.target
+              service
+
               # Start All Services
-              systemctl enable filebeat metricbeat auditbeat logstash mcp-server threat-detection
-              systemctl start filebeat metricbeat auditbeat logstash mcp-server threat-detection
-              
-              # Run Financial App (Fin App is simple script, running in background is fine)
-              nohup python3 /opt/financial_app/app.py > /dev/null 2>&1 &
+              systemctl enable filebeat metricbeat auditbeat logstash mcp-server threat-detection financial-app
+              systemctl start filebeat metricbeat auditbeat logstash mcp-server threat-detection financial-app
               EOF
 }
 
