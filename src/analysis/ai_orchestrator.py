@@ -12,6 +12,7 @@ except ImportError:
 from anomaly_detection import AnomalyDetector
 from rag_engine import ThreatIntelRAG
 from alert_manager import AlertManager
+from risk_engine import EntityRiskEngine
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -47,9 +48,17 @@ def fetch_new_logs(client, last_poll_time):
     """
     if not client:
         # Mock Data Generator
-        yield {"event_id": "1001", "timestamp": datetime.now().isoformat(), "status": "SUCCESS", "user": "alice", "ip": "10.0.0.5"}
+        yield {"event_id": "1001", "timestamp": datetime.now().isoformat(), "status": "SUCCESS", "user": "alice", "ip": "10.0.0.5", "event_type": "Login"}
         if int(time.time()) % 10 == 0: # Every 10 seconds mock a failure
-            yield {"event_id": "1002", "timestamp": datetime.now().isoformat(), "status": "FAILURE", "user": "root", "ip": "192.168.1.5", "message": "Failed password for root"}
+            yield {
+                "event_id": "1002", 
+                "timestamp": datetime.now().isoformat(), 
+                "status": "FAILURE", 
+                "user": "root", 
+                "ip": "192.168.1.5", 
+                "event_type": "Failed Login",
+                "message": "Failed password for root"
+            }
         return
 
     query = {
@@ -79,8 +88,12 @@ def run_detection_loop():
     # Initialize Modules
     client = get_opensearch_client()
     detector = AnomalyDetector()
-    rag_engine = ThreatIntelRAG(mcp_url="http://localhost:8000")
-    alert_manager = AlertManager(step_function_arn="arn:aws:states:us-east-1:123456789012:stateMachine:threat-response-workflow")
+    mcp_url = os.getenv("MCP_URL", "http://localhost:8000")
+    rag_engine = ThreatIntelRAG(mcp_url=mcp_url)
+    risk_engine = EntityRiskEngine()
+    
+    sfn_arn = os.getenv("STEP_FUNCTION_ARN", "arn:aws:states:us-east-1:123456789012:stateMachine:threat-response-workflow")
+    alert_manager = AlertManager(step_function_arn=sfn_arn)
 
     last_poll_time = datetime.now() - timedelta(minutes=1)
 
@@ -90,24 +103,69 @@ def run_detection_loop():
         for log_entry in fetch_new_logs(client, last_poll_time):
             # 0. Pre-Fetch Context (Threat Intel)
             ip = log_entry.get('ip') or log_entry.get('src_ip')
+            user = log_entry.get('user')
+            
             threat_context = None
             if ip:
                 threat_context = rag_engine.lookup_ip(ip)
 
             # 1. AI Analysis (with Context)
-            score = detector.analyze_log(log_entry, context=threat_context)
+            anomaly_score = detector.analyze_log(log_entry, context=threat_context)
             
-            # 2. Threshold Check
-            if score >= 0.4:
-                logger.warning(f"Suspicious Activity Detected (Score: {score})")
+            # 2. Risk Engine Update (Stateful)
+            entity_id = f"user:{user}" if user else f"ip:{ip}"
+            
+            if anomaly_score > 0.0:
+                # Calculate multipliers based on context
+                # Asset Criticality (simulated based on IP/Host)
+                asset_criticality = "low"
+                if log_entry.get('dst_ip') == "10.0.0.5": # Core Banking
+                    asset_criticality = "critical"
+
+                # Update Risk State
+                risk_update = risk_engine.update_risk(entity_id, {
+                    "alert_id": log_entry.get("event_id"),
+                    "type": log_entry.get("event_type", "Unknown Anomaly"),
+                    "anomaly_confidence": anomaly_score,
+                    "asset_criticality": asset_criticality,
+                    "multipliers": {} 
+                })
                 
-                # 3. Threat Intel Enrichment (Full RAG)
-                # We can reuse the context we already fetched to avoid double lookup if we want, 
-                # but for now let's keep the flow simple or pass it in.
-                alert_payload = {"original_log": log_entry, "score": score}
+                # Check for skipped score (idempotency)
+                if risk_update.get("skipped"):
+                     logger.info(f"Skipping risk update for {entity_id} - Duplicate Alert")
+
+                current_risk_score = risk_update["risk_score"]
+                current_risk_level = risk_update["risk_level"]
+                
+                logger.info(f"Entity {entity_id} Risk: {current_risk_score} ({current_risk_level})")
+            else:
+                current_risk_score = 0
+                current_risk_level = "LOW"
+
+            # 3. Decision Logic (Stateful OR Instantaneous)
+            # Trigger if Anomaly is high OR Cumulative Risk is high
+            if anomaly_score >= 0.7 or current_risk_score >= 40:
+                logger.warning(f"ACTION TRIGGERED | Anomaly: {anomaly_score} | Risk: {current_risk_score}")
+                
+                # 4. Threat Intel Enrichment (Full RAG)
+                alert_payload = {
+                    "original_log": log_entry, 
+                    "score": anomaly_score,
+                    "risk_state": {
+                        "score": current_risk_score,
+                        "level": current_risk_level
+                    }
+                }
                 enriched_alert = rag_engine.enrich_alert(alert_payload, existing_context=threat_context)
                 
-                # 4. Alert Dispatch (SOAR)
+                # 5. Alert Dispatch (SOAR)
+                # Override severity based on Risk Level if it's higher
+                if current_risk_score >= 90:
+                    enriched_alert["severity"] = "CRITICAL"
+                elif current_risk_score >= 70:
+                    enriched_alert["severity"] = "HIGH"
+                
                 alert_manager.dispatch_alert(enriched_alert)
                 
                 print(f"[ALERT DISPATCHED] {json.dumps(enriched_alert, indent=2)}\n")

@@ -43,12 +43,11 @@ class AlertManager:
             
             if self.step_function_arn:
                 # Uncomment to actually trigger in AWS
-                # response = self.sfn_client.start_execution(
-                #     stateMachineArn=self.step_function_arn,
-                #     input=payload
-                # )
-                # self.logger.info(f"Step Function Triggered: {response['executionArn']}")
-                pass
+                response = self.sfn_client.start_execution(
+                    stateMachineArn=self.step_function_arn,
+                    input=payload
+                )
+                self.logger.info(f"Step Function Triggered: {response['executionArn']}")
             else:
                 self.logger.warning("No Step Function ARN provided. Skipping SOAR trigger.")
 

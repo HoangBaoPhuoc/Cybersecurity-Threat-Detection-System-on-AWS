@@ -25,6 +25,31 @@ def lambda_handler(event, context):
             logger.error("No IP address found in event payload.")
             return {"status": "FAILED", "reason": "No IP address provided"}
 
+        # --- GUARDRAIL CHECK ---
+        try:
+            dynamodb = boto3.resource('dynamodb')
+            table = dynamodb.Table('entity-risk-state')
+            entity_id = f"ip:{ip_to_block}"
+            response = table.get_item(Key={'entity_id': entity_id})
+            
+            allowed = False
+            if 'Item' in response:
+                score = float(response['Item'].get('cumulative_risk_score', 0))
+                if score >= 70:
+                    allowed = True
+                else:
+                    logger.warning(f"Guardrail Blocked: Risk Score {score} < 70 for {entity_id}")
+            else:
+                logger.warning(f"Guardrail Blocked: No risk state found for {entity_id}")
+
+            if not allowed:
+                return {"status": "SKIPPED", "reason": "Risk Score below threshold", "action": "None"}
+
+        except Exception as e:
+            logger.error(f"Guardrail Check Failed: {e}")
+            return {"status": "ERROR", "reason": "Guardrail Check Failed"}
+        # -----------------------
+
         # 1. Find the Network ACL associated with the public subnets (or specific subnets)
         # For simplicity, we look for NACLs in the VPC. In a real scenario, filter by Subnet ID.
         response = ec2.describe_network_acls(

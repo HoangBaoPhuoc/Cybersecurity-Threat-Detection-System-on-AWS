@@ -21,6 +21,31 @@ def lambda_handler(event, context):
             logger.warning("No valid IAM username provided. Skipping disable action.")
             return {"status": "SKIPPED", "reason": "No valid user"}
 
+        # --- GUARDRAIL CHECK ---
+        try:
+            dynamodb = boto3.resource('dynamodb')
+            table = dynamodb.Table('entity-risk-state')
+            entity_id = f"user:{user}"
+            response = table.get_item(Key={'entity_id': entity_id})
+            
+            allowed = False
+            if 'Item' in response:
+                score = float(response['Item'].get('cumulative_risk_score', 0))
+                if score >= 70:
+                    allowed = True
+                else:
+                    logger.warning(f"Guardrail Blocked: Risk Score {score} < 70 for {entity_id}")
+            else:
+                logger.warning(f"Guardrail Blocked: No risk state found for {entity_id}")
+
+            if not allowed:
+                return {"status": "SKIPPED", "reason": "Risk Score below threshold", "action": "None"}
+
+        except Exception as e:
+            logger.error(f"Guardrail Check Failed: {e}")
+            return {"status": "ERROR", "reason": "Guardrail Check Failed"}
+        # -----------------------
+
         # Check if user exists (Mock check or real call)
         # In a real scenario, we might want to check if it's a critical system user first.
         
