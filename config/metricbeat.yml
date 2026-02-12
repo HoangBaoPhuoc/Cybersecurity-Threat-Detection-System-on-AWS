@@ -18,12 +18,35 @@ metricbeat.modules:
     - filesystem
     - fsstat
     - uptime
+    - service
   enabled: true
   period: 10s
   processes: ['.*']
+  process.include_top_n:
+    by_cpu: 5      # include top 5 processes by CPU
+    by_memory: 5   # include top 5 processes by memory
 
-  # cpu.metrics:  ["percentages"]  # The other available options are normalized_percentages and ticks.
-  # core.metrics: ["percentages"]  # The other available options are ticks.
+- module: system
+  metricsets:
+    - socket
+  enabled: true
+  period: 10s
+  socket.reverse_lookup.enabled: false
+  socket.reverse_lookup.success_ttl: 60s
+  socket.reverse_lookup.failure_ttl: 60s
+
+- module: docker
+  metricsets:
+    - container
+    - cpu
+    - diskio
+    - healthcheck
+    - info
+    - memory
+    - network
+  hosts: ["unix:///var/run/docker.sock"]
+  period: 10s
+  enabled: true
 
 setup.template.settings:
   index.number_of_shards: 1

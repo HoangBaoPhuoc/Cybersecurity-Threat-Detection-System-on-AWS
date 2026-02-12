@@ -10,6 +10,12 @@ auditbeat.modules:
   rate_limit: 0
   include_raw_message: false
   include_warnings: false
+  audit_rules: |
+    -w /etc/group -p wa -k identity
+    -w /etc/passwd -p wa -k identity
+    -w /etc/gshadow -p wa -k identity
+    -w /etc/shadow -p wa -k identity
+    -a always,exit -F arch=b64 -S execve,execveat -k exec
 
 - module: file_integrity
   paths:
@@ -19,6 +25,19 @@ auditbeat.modules:
   - /usr/sbin
   - /etc
   recursive: true
+  
+- module: system
+  datasets:
+    - package # Installed, updated, and removed packages
+    - host    # General host information
+    - login   # Login events
+    - process # Process start and stop events
+    - socket  # Opened and closed sockets
+    - user    # User changes
+  state.period: 12h
+  user.detect_password_changes: true
+  login.wtmp_file_pattern: /var/log/wtmp*
+  login.btmp_file_pattern: /var/log/btmp*
 
 setup.template.settings:
   index.number_of_shards: 1
