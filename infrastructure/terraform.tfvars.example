@@ -14,5 +14,17 @@ jira_project_key = "SEC"
 # Optional: AWS Region
 aws_region = "us-east-1"
 
-# OpenAI Configuration (Required for AI Analysis)
-openai_api_key = "sk-..."
+# Wazuh Manager (EKS service endpoint)
+wazuh_manager_endpoint = "wazuh.svc.cluster.local"
+
+# EKS Cluster Name
+eks_cluster_name = "nextgen-soc-eks"
+
+# OpenSearch Vector Domain Name
+opensearch_vector_domain_name = "threat-detection-vector"
+
+# Playbooks Bucket
+playbook_bucket_name = "threat-detection-playbooks"
+
+# Operator UI Bucket
+operator_ui_bucket_name = "threat-detection-operator-ui"

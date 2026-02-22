@@ -50,8 +50,32 @@ variable "jira_project_key" {
   default     = "SEC"
 }
 
-variable "openai_api_key" {
-  description = "OpenAI API Key for Real-Time AI Analysis"
+variable "wazuh_manager_endpoint" {
+  description = "Internal endpoint/DNS for Wazuh manager service on EKS"
   type        = string
-  sensitive   = true
+  default     = "wazuh.svc.cluster.local"
+}
+
+variable "eks_cluster_name" {
+  description = "Name of the EKS cluster for Wazuh and microservices"
+  type        = string
+  default     = "nextgen-soc-eks"
+}
+
+variable "opensearch_vector_domain_name" {
+  description = "OpenSearch domain for vector RAG"
+  type        = string
+  default     = "threat-detection-vector"
+}
+
+variable "playbook_bucket_name" {
+  description = "S3 bucket for IR playbooks"
+  type        = string
+  default     = "threat-detection-playbooks"
+}
+
+variable "operator_ui_bucket_name" {
+  description = "S3 bucket for the React operator UI"
+  type        = string
+  default     = "threat-detection-operator-ui"
 }

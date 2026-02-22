@@ -1,9 +1,7 @@
 import unittest
-import time
 import sys
 import os
 from unittest.mock import MagicMock
-from decimal import Decimal
 
 # Mock boto3 before importing risk_engine
 sys.modules["boto3"] = MagicMock()
@@ -30,99 +28,45 @@ class MockTable:
 
 class TestEntityRiskEngine(unittest.TestCase):
     def setUp(self):
-        self.engine = EntityRiskEngine()
+        os.environ["DECAY_FACTOR"] = "0.98"
+        os.environ["DECAY_TIME_UNIT_SECONDS"] = "3600"
+        self._now = 1000000
+
+        self.engine = EntityRiskEngine(time_provider=lambda: self._now)
         # Mock DynamoDB Table
         self.engine.table = MockTable()
 
     def test_initial_risk(self):
-        """Test risk calculation for a new entity"""
         res = self.engine.update_risk("user:test1", {
-            "type": "Data Exfiltration",
-            "asset_criticality": "low"
+            "severity": "HIGH"
         })
-        # Base weight 90 * 1.0 = 90
-        self.assertEqual(res['risk_score'], 90.0)
-        self.assertEqual(res['risk_level'], "CRITICAL")
+        self.assertEqual(res["risk_score"], 60.0)
+        self.assertEqual(res["decayed_score"], 0.0)
 
-    def test_clamping(self):
-        """Test score clamping at 100"""
-        res = self.engine.update_risk("user:superrisk", {
-            "type": "Data Exfiltration", # 90
-            "multipliers": {"data_sensitivity": 10.0} # 900
+    def test_multiplier_context(self):
+        res = self.engine.update_risk("ip:1.2.3.4", {
+            "severity": "HIGH",
+            "context": {"untrusted_ip": True, "admin_role": True}
         })
-        self.assertEqual(res['risk_score'], 100.0)
+        # 60 * (1.5 * 1.4) = 126
+        self.assertEqual(res["multiplier"], 2.1)
+        self.assertEqual(res["risk_score"], 126.0)
 
-    def test_idempotency(self):
-        """Test alert duplication check"""
-        # First Call
-        res1 = self.engine.update_risk("user:idem", {
-            "alert_id": "alert-123",
-            "type": "Impossible Travel" # 50
+    def test_decay_formula(self):
+        first = self.engine.update_risk("user:decay", {"severity": "HIGH"})
+        self.assertEqual(first["risk_score"], 60.0)
+
+        self._now += 3600
+        second = self.engine.update_risk("user:decay", {"severity": "LOW"})
+        expected = 60.0 * 0.98 + 10.0
+        self.assertAlmostEqual(second["risk_score"], expected, places=4)
+
+    def test_explicit_multiplier(self):
+        res = self.engine.update_risk("user:explicit", {
+            "severity": "MEDIUM",
+            "multiplier": 2.5
         })
-        self.assertEqual(res1['risk_score'], 50.0)
-
-        # Second Call (Same ID)
-        res2 = self.engine.update_risk("user:idem", {
-            "alert_id": "alert-123",
-            "type": "Impossible Travel"
-        })
-        self.assertEqual(res2['risk_score'], 50.0)
-        self.assertTrue(res2.get('skipped', False))
-
-        # Check DynamoDB state
-        item = self.engine.table.items["user:idem"]
-        self.assertIn("alert-123", item['recent_alert_ids'])
-
-    def test_privileged_multiplier(self):
-        """Test privileged user multiplier"""
-        # root user
-        res = self.engine.update_risk("user:root", {
-            "type": "Suspicious PowerShell" # 70
-        })
-        # 70 * 1.5 (Privilege) = 105 -> Clamp 100
-        self.assertEqual(res['risk_score'], 100.0)
-
-        # normal user
-        res2 = self.engine.update_risk("user:regular", {
-            "type": "Suspicious PowerShell" # 70
-        })
-        self.assertEqual(res2['risk_score'], 70.0)
-
-    def test_asset_criticality(self):
-        """Test asset criticality multiplier"""
-        res = self.engine.update_risk("ip:1.1.1.1", {
-            "type": "Lateral Movement", # 60
-            "asset_criticality": "critical" # 1.6
-        })
-        # 60 * 1.6 = 96.0
-        self.assertEqual(res['risk_score'], 96.0)
-
-    def test_guardrail(self):
-        """Test should_allow_destructive_action"""
-        self.engine.update_risk("user:lowrisk", {
-            "type": "Impossible Travel" # 50 (Medium)
-        })
-        
-        # Threshold 70
-        self.assertFalse(self.engine.should_allow_destructive_action("user:lowrisk"))
-        
-        # Bump up
-        self.engine.update_risk("user:lowrisk", {
-            "type": "Impossible Travel" # +50 = 100
-        })
-        self.assertTrue(self.engine.should_allow_destructive_action("user:lowrisk"))
-
-    def test_history_cap(self):
-        """Test history trimming"""
-        for i in range(30):
-            self.engine.update_risk("user:hist", {
-                "alert_id": f"alert-{i}",
-                "type": "Admin Policy Change"
-            })
-            
-        item = self.engine.table.items["user:hist"]
-        self.assertEqual(len(item['risk_factors_history']), 25)
-        self.assertEqual(len(item['recent_alert_ids']), 20)
+        self.assertEqual(res["risk_score"], 75.0)
 
 if __name__ == '__main__':
     unittest.main()

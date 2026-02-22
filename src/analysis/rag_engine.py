@@ -23,10 +23,15 @@ class ThreatIntelRAG:
         Enrich an alert using external MCP tools and internal knowledge.
         """
         original_log = alert_data.get('original_log', {})
+        risk_state = alert_data.get('risk_state', {})
+        risk_score = risk_state.get('score')
+        if risk_score is None:
+            risk_score = alert_data.get('risk_score', 0.0)
+
         enrichment = {
             "threat_intel_source": "MCP + Internal RAG",
             "mitre_technique": "T1078 - Valid Accounts", # Default, would be dynamic in real RAG
-            "risk_score": alert_data.get('score', 0.0)
+            "risk_score": float(risk_score) if risk_score is not None else 0.0
         }
         
         # 1. IP Reputation Lookup (or use existing context)
@@ -38,16 +43,16 @@ class ThreatIntelRAG:
 
         if ip_data:
             enrichment['ip_reputation'] = ip_data
-            if ip_data.get('risk') == 'HIGH':
-                enrichment['risk_score'] = min(enrichment['risk_score'] + 0.2, 1.0)
+            if ip_data.get('risk') == 'HIGH' and enrichment['risk_score'] < 10.0:
+                enrichment['risk_score'] = 10.0
 
         # 2. Add Recommended Action based on Severity
-        if enrichment['risk_score'] >= 0.8:
+        if enrichment['risk_score'] >= 90.0:
             enrichment['severity'] = "CRITICAL"
             enrichment['suggested_action'] = "Block IP and Isolate Host immediately."
-        elif enrichment['risk_score'] >= 0.5:
+        elif enrichment['risk_score'] >= 70.0:
             enrichment['severity'] = "HIGH"
-            enrichment['suggested_action'] = "Reset User Password and Monitor."
+            enrichment['suggested_action'] = "Create Jira ticket and request approval."
         else:
             enrichment['severity'] = "MEDIUM"
             enrichment['suggested_action'] = "Log and Observe."

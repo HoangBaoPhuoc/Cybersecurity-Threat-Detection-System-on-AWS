@@ -24,6 +24,13 @@ OPENSEARCH_PORT = int(os.getenv("OPENSEARCH_PORT", 9200))
 OPENSEARCH_AUTH = (os.getenv("OPENSEARCH_USER", "admin"), os.getenv("OPENSEARCH_PASS", "Admin123!"))
 INDEX_PATTERN = "logs-*,audit-logs-*,metrics-system-*" # Monitor all indices
 
+GUARDDUTY_SEVERITY_THRESHOLDS = [
+    (8.9, "CRITICAL"),
+    (7.0, "HIGH"),
+    (4.0, "MEDIUM"),
+    (0.0, "LOW")
+]
+
 def get_opensearch_client():
     if not OpenSearch:
         logger.warning("opensearch-py not installed. Using Mock Data Mode.")
@@ -82,12 +89,73 @@ def fetch_new_logs(client, last_poll_time):
     except Exception as e:
         logger.error(f"Error querying OpenSearch: {e}")
 
+
+def _map_guardduty_severity(value):
+    try:
+        severity_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    for threshold, label in GUARDDUTY_SEVERITY_THRESHOLDS:
+        if severity_value >= threshold:
+            return label
+    return "LOW"
+
+
+def _map_securityhub_severity(detail):
+    findings = detail.get("findings") if isinstance(detail, dict) else None
+    if not findings:
+        return None
+
+    finding = findings[0]
+    severity = finding.get("Severity", {})
+    label = severity.get("Label")
+    if label:
+        return str(label).upper()
+
+    normalized = severity.get("Normalized")
+    if normalized is None:
+        return None
+
+    try:
+        normalized_value = float(normalized)
+    except (TypeError, ValueError):
+        return None
+
+    if normalized_value >= 90:
+        return "CRITICAL"
+    if normalized_value >= 70:
+        return "HIGH"
+    if normalized_value >= 40:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _extract_event_severity(log_entry):
+    if not isinstance(log_entry, dict):
+        return None
+
+    if "severity" in log_entry and isinstance(log_entry.get("severity"), str):
+        return log_entry.get("severity").upper()
+
+    detail = log_entry.get("detail", {})
+    securityhub = _map_securityhub_severity(detail)
+    if securityhub:
+        return securityhub
+
+    guardduty_value = detail.get("severity") if isinstance(detail, dict) else None
+    guardduty = _map_guardduty_severity(guardduty_value)
+    if guardduty:
+        return guardduty
+
+    return None
+
 def run_detection_loop():
-    logger.info("Starting AI Orchestrator...")
+    logger.info("Starting AI Orchestrator with Hybrid Detection (Rule + ML)...")
     
     # Initialize Modules
     client = get_opensearch_client()
-    detector = AnomalyDetector()
+    detector = AnomalyDetector()  # Now uses ML models
     mcp_url = os.getenv("MCP_URL", "http://localhost:8000")
     rag_engine = ThreatIntelRAG(mcp_url=mcp_url)
     risk_engine = EntityRiskEngine()
@@ -109,66 +177,63 @@ def run_detection_loop():
             if ip:
                 threat_context = rag_engine.lookup_ip(ip)
 
-            # 1. AI Analysis (with Context)
-            anomaly_score = detector.analyze_log(log_entry, context=threat_context)
+            # 1. ML-Based Anomaly Detection (NEW APPROACH)
+            # Returns: (anomaly_score, features, ml_details)
+            anomaly_score, features, ml_details = detector.analyze_log(log_entry, context=threat_context)
             
             # 2. Risk Engine Update (Stateful)
             entity_id = f"user:{user}" if user else f"ip:{ip}"
             
             if anomaly_score > 0.0:
-                # Calculate multipliers based on context
-                # Asset Criticality (simulated based on IP/Host)
-                asset_criticality = "low"
-                if log_entry.get('dst_ip') == "10.0.0.5": # Core Banking
-                    asset_criticality = "critical"
+                severity = _extract_event_severity(log_entry)
+                if not severity:
+                    if anomaly_score >= 0.8:
+                        severity = "CRITICAL"
+                    elif anomaly_score >= 0.6:
+                        severity = "HIGH"
+                    elif anomaly_score >= 0.3:
+                        severity = "MEDIUM"
+                    else:
+                        severity = "LOW"
 
-                # Update Risk State
+                context = {
+                    "untrusted_ip": threat_context is not None and threat_context.get("risk") == "HIGH",
+                    "admin_role": bool(user and user.lower() in ["root", "admin", "administrator"]),
+                    "geo_anomaly": log_entry.get("geo_anomaly", False)
+                }
+
                 risk_update = risk_engine.update_risk(entity_id, {
-                    "alert_id": log_entry.get("event_id"),
-                    "type": log_entry.get("event_type", "Unknown Anomaly"),
-                    "anomaly_confidence": anomaly_score,
-                    "asset_criticality": asset_criticality,
-                    "multipliers": {} 
+                    "severity": severity,
+                    "context": context
                 })
-                
-                # Check for skipped score (idempotency)
-                if risk_update.get("skipped"):
-                     logger.info(f"Skipping risk update for {entity_id} - Duplicate Alert")
 
                 current_risk_score = risk_update["risk_score"]
-                current_risk_level = risk_update["risk_level"]
-                
-                logger.info(f"Entity {entity_id} Risk: {current_risk_score} ({current_risk_level})")
+                logger.info(f"Entity {entity_id} Risk: {current_risk_score}")
             else:
-                current_risk_score = 0
-                current_risk_level = "LOW"
+                current_risk_score = 0.0
 
             # 3. Decision Logic (Stateful OR Instantaneous)
             # Trigger if Anomaly is high OR Cumulative Risk is high
             if anomaly_score >= 0.7 or current_risk_score >= 40:
                 logger.warning(f"ACTION TRIGGERED | Anomaly: {anomaly_score} | Risk: {current_risk_score}")
-                
-                # 4. Threat Intel Enrichment (Full RAG)
+
                 alert_payload = {
-                    "original_log": log_entry, 
-                    "score": anomaly_score,
+                    "alert_id": log_entry.get("event_id", "unknown"),
+                    "timestamp": log_entry.get("timestamp", datetime.now().isoformat()),
+                    "detection_method": "ML-based Anomaly Detection",
+                    "models_used": ml_details.get("models_used", ["Hybrid"]),
+                    "original_log": log_entry,
+                    "anomaly_score": anomaly_score,
+                    "ml_details": ml_details,
+                    "extracted_features": features,
                     "risk_state": {
-                        "score": current_risk_score,
-                        "level": current_risk_level
-                    }
+                        "score": current_risk_score
+                    },
+                    "threat_intel": threat_context
                 }
+
                 enriched_alert = rag_engine.enrich_alert(alert_payload, existing_context=threat_context)
-                
-                # 5. Alert Dispatch (SOAR)
-                # Override severity based on Risk Level if it's higher
-                if current_risk_score >= 90:
-                    enriched_alert["severity"] = "CRITICAL"
-                elif current_risk_score >= 70:
-                    enriched_alert["severity"] = "HIGH"
-                
                 alert_manager.dispatch_alert(enriched_alert)
-                
-                print(f"[ALERT DISPATCHED] {json.dumps(enriched_alert, indent=2)}\n")
 
         last_poll_time = current_time
         time.sleep(10) # Poll every 10 seconds

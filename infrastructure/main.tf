@@ -889,7 +889,7 @@ resource "aws_instance" "app_server" {
               curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
               echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee -a /etc/apt/sources.list.d/wazuh.list
               apt-get update
-              WAZUH_MANAGER="${aws_instance.wazuh_manager.private_ip}"
+              WAZUH_MANAGER="${var.wazuh_manager_endpoint}"
               apt-get install -y wazuh-agent
               sed -i "s/MANAGER_IP/$WAZUH_MANAGER/" /var/ossec/etc/ossec.conf
               systemctl enable wazuh-agent
@@ -942,7 +942,7 @@ resource "aws_instance" "logstash_server" {
               curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
               echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee -a /etc/apt/sources.list.d/wazuh.list
               apt-get update
-              WAZUH_MANAGER="${aws_instance.wazuh_manager.private_ip}"
+              WAZUH_MANAGER="${var.wazuh_manager_endpoint}"
               apt-get install -y wazuh-agent
               sed -i "s/MANAGER_IP/$WAZUH_MANAGER/" /var/ossec/etc/ossec.conf
               systemctl enable wazuh-agent
@@ -1014,7 +1014,6 @@ resource "aws_instance" "detection_engine" {
               Environment="MCP_URL=http://${aws_instance.soar_orchestrator.private_ip}:8000"
               Environment="JIRA_API_TOKEN=${var.jira_api_token}"
               Environment="JIRA_PROJECT_KEY=${var.jira_project_key}"
-              Environment="OPENAI_API_KEY=${var.openai_api_key}"
               ExecStart=/usr/bin/python3 ai_orchestrator.py
               Restart=always
 
@@ -1026,7 +1025,7 @@ resource "aws_instance" "detection_engine" {
               curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
               echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee -a /etc/apt/sources.list.d/wazuh.list
               apt-get update
-              WAZUH_MANAGER="${aws_instance.wazuh_manager.private_ip}"
+              WAZUH_MANAGER="${var.wazuh_manager_endpoint}"
               apt-get install -y wazuh-agent
               sed -i "s/MANAGER_IP/$WAZUH_MANAGER/" /var/ossec/etc/ossec.conf
               systemctl enable wazuh-agent
@@ -1122,7 +1121,6 @@ resource "aws_instance" "soar_orchestrator" {
               Environment="STEP_FUNCTION_ARN=${aws_sfn_state_machine.soar_workflow.arn}"
               Environment="JIRA_API_TOKEN=${var.jira_api_token}"
               Environment="JIRA_PROJECT_KEY=${var.jira_project_key}"
-              Environment="OPENAI_API_KEY=${var.openai_api_key}"
               ExecStart=/usr/bin/python3 ai_orchestrator.py
               Restart=always
 
@@ -1134,7 +1132,7 @@ resource "aws_instance" "soar_orchestrator" {
               curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
               echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee -a /etc/apt/sources.list.d/wazuh.list
               apt-get update
-              WAZUH_MANAGER="${aws_instance.wazuh_manager.private_ip}"
+              WAZUH_MANAGER="${var.wazuh_manager_endpoint}"
               apt-get install -y wazuh-agent
               sed -i "s/MANAGER_IP/$WAZUH_MANAGER/" /var/ossec/etc/ossec.conf
               systemctl enable wazuh-agent
@@ -1143,123 +1141,6 @@ resource "aws_instance" "soar_orchestrator" {
               # Start Services
               systemctl enable mcp-server ai-orchestrator
               systemctl start mcp-server ai-orchestrator
-              EOF
-}
-
-# --- 5. Wazuh Manager ---
-
-resource "aws_security_group" "sg_wazuh" {
-  name        = "sg_wazuh"
-  description = "Security Group for Wazuh Manager"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "SSH"
-    from_port       = 22
-    to_port         = 22
-    protocol        = "tcp"
-    security_groups = [aws_security_group.bastion_sg.id]
-  }
-
-  ingress {
-    description = "Wazuh Agent Events"
-    from_port   = 1514
-    to_port     = 1514
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  ingress {
-    description = "Wazuh Agent Enrollment"
-    from_port   = 1515
-    to_port     = 1515
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  ingress {
-    description     = "Wazuh API"
-    from_port       = 55000
-    to_port         = 55000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.bastion_sg.id]
-  }
-
-  ingress {
-    description     = "Wazuh Dashboard"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.bastion_sg.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-
-resource "aws_instance" "wazuh_manager" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = "t3.medium"
-  subnet_id     = aws_subnet.private[0].id
-
-  vpc_security_group_ids      = [aws_security_group.sg_wazuh.id]
-  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
-  associate_public_ip_address = false
-
-  tags = {
-    Name = "wazuh-manager"
-  }
-
-  user_data = <<-EOF
-              #!/bin/bash
-              apt-get update
-              apt-get install -y curl apt-transport-https gnupg lsb-release
-
-              # 1. Install Wazuh Manager
-              curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
-              echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee -a /etc/apt/sources.list.d/wazuh.list
-              apt-get update
-              apt-get install -y wazuh-manager wazuh-dashboard wazuh-indexer
-
-              # Basic Configuration (Demo)
-              # In production, use wazuh-install.sh or proper config management
-              
-              systemctl enable wazuh-manager
-              systemctl start wazuh-manager
-              systemctl enable wazuh-dashboard
-              systemctl start wazuh-dashboard
-              systemctl enable wazuh-indexer
-              systemctl start wazuh-indexer
-
-              # 2. Install Filebeat (Forward Alerts to OpenSearch SIEM)
-              curl -L -O https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-8.10.2-amd64.deb
-              dpkg -i filebeat-8.10.2-amd64.deb
-
-              cat <<yml > /etc/filebeat/filebeat.yml
-              filebeat.inputs:
-              - type: log
-                enabled: true
-                paths:
-                  - /var/ossec/logs/alerts/alerts.json
-                json.keys_under_root: true
-                json.overwrite_keys: true
-                json.add_error_key: true
-                json.message_key: full_log
-
-              output.opensearch:
-                hosts: ["${aws_opensearch_domain.siem.endpoint}:443"]
-                protocol: "https"
-                username: "admin"
-                password: "Admin123!" 
-                ssl.verification_mode: none
-              yml
-
-              systemctl enable filebeat
-              systemctl start filebeat
               EOF
 }
 
